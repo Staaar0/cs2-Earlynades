@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>EarlyNades</AssemblyName>
+    <RootNamespace>EarlyNades</RootNamespace>
+    <!-- Emit dependency assemblies alongside the plugin (recommended for CSSharp plugins). -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The CounterStrikeSharp API. Bump this version if a newer one is out. -->
+    <PackageReference Include="CounterStrikeSharp.API" Version="1.0.369" />
+  </ItemGroup>
+
+</Project>
