@@ -1,38 +1,30 @@
 using System.Globalization;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Core.Attributes.Registration; // <-- ConsoleCommand attribute lives here
+using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Commands;
 using Microsoft.Extensions.Logging;
 
 namespace EarlyNades;
 
-// Lets players throw grenades sooner after pulling one out.
-// By default CS2 makes you wait ~1.0s after switching to a nade before it can
-// be thrown. This plugin shortens that window (default 0.8s).
+// Shortens the grenade pull-out (deploy) time by writing m_flDeployDuration
+// directly into each grenade's weapon-data in the server's memory at runtime.
+// This is authoritative on the server regardless of whether a workshop vdata
+// addon is mounted, and uses no signatures.
 public class EarlyNades : BasePlugin
 {
     public override string ModuleName => "Early Nades";
-    public override string ModuleVersion => "1.0.0";
+    public override string ModuleVersion => "2.0.0";
     public override string ModuleAuthor => "EarlyNades";
     public override string ModuleDescription =>
-        "Allows players to throw grenades a bit earlier after switching to them.";
+        "Shortens grenade deploy time so they can be thrown sooner.";
 
-    // CS2 dedicated servers tick at 64 Hz.
-    private const float TickInterval = 1.0f / 64.0f;
+    // Desired deploy duration in seconds. Default game value is 1.0.
+    private float _deploy = 0.8f;
 
-    // Seconds after pulling out a nade before it can be thrown.
-    // Game default is ~1.0s. Change the number here, or live with
-    // the "css_earlynades_delay" console command.
-    private float _throwDelay = 0.8f;
+    // Remember which grenade types we've already logged, to keep the console clean.
+    private readonly HashSet<string> _logged = new();
 
-    private const int MaxSlots = 64;
-
-    // Per-player state, indexed by player slot.
-    private readonly uint[] _lastWeaponIndex = new uint[MaxSlots];
-    private readonly int[] _pinnedTick = new int[MaxSlots];
-
-    // Every throwable utility in CS2.
     private static readonly HashSet<string> GrenadeNames = new()
     {
         "weapon_hegrenade",
@@ -41,115 +33,86 @@ public class EarlyNades : BasePlugin
         "weapon_molotov",
         "weapon_incgrenade",
         "weapon_decoy",
-        "weapon_tagrenade", // snowball / tactical awareness grenade
+        "weapon_tagrenade",
     };
 
     public override void Load(bool hotReload)
     {
-        for (int i = 0; i < MaxSlots; i++)
-            _pinnedTick[i] = -1;
+        RegisterListener<Listeners.OnEntitySpawned>(OnEntitySpawned);
 
-        RegisterListener<Listeners.OnTick>(OnTick);
-        Logger.LogInformation("Early Nades loaded. Throw delay = {Delay}s", _throwDelay);
+        // Catch grenades that already exist (e.g. on hot reload).
+        ApplyToAllExisting();
+
+        Logger.LogInformation("=== Early Nades v2 LOADED. deploy={Deploy}s ===", _deploy);
     }
 
-    private void OnTick()
+    private void OnEntitySpawned(CEntityInstance entity)
     {
-        int delayTicks = (int)Math.Round(_throwDelay / TickInterval);
-        int now = Server.TickCount;
-
-        foreach (var player in Utilities.GetPlayers())
+        try
         {
-            try
+            if (entity is null || !entity.IsValid)
+                return;
+
+            string name = entity.DesignerName;
+            if (!GrenadeNames.Contains(name))
+                return;
+
+            ApplyToWeapon(entity, name);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Early Nades: failed to apply deploy time on spawn");
+        }
+    }
+
+    private void ApplyToWeapon(CEntityInstance entity, string name)
+    {
+        var weapon = entity.As<CCSWeaponBase>();
+        var vdata = weapon?.VData;
+        if (vdata is null)
+            return;
+
+        // VData is shared per weapon type, so this effectively sets it for all
+        // grenades of this kind. Writing every spawn is cheap and idempotent.
+        ref float deploy = ref Schema.GetRef<float>(
+            vdata.Handle, "CBasePlayerWeaponVData", "m_flDeployDuration");
+
+        if (_logged.Add(name))
+            Logger.LogInformation(
+                "EarlyNades: {Weapon} deploy {Old:0.###}s -> {New:0.###}s", name, deploy, _deploy);
+
+        deploy = _deploy;
+    }
+
+    private void ApplyToAllExisting()
+    {
+        foreach (var name in GrenadeNames)
+        {
+            foreach (var ent in Utilities.FindAllEntitiesByDesignerName<CCSWeaponBase>(name))
             {
-                if (player is null || !player.IsValid)
-                    continue;
-
-                int slot = player.Slot;
-                if (slot < 0 || slot >= MaxSlots)
-                    continue;
-
-                var pawn = player.PlayerPawn?.Value;
-                if (pawn is null || !pawn.IsValid)
-                {
-                    Reset(slot);
-                    continue;
-                }
-
-                var active = pawn.WeaponServices?.ActiveWeapon?.Value;
-                if (active is null || !active.IsValid)
-                {
-                    Reset(slot);
-                    continue;
-                }
-
-                // Not a grenade -> nothing to do, just remember it.
-                if (!GrenadeNames.Contains(active.DesignerName))
-                {
-                    _lastWeaponIndex[slot] = active.Index;
-                    _pinnedTick[slot] = -1;
-                    continue;
-                }
-
-                // Did the player just switch to this grenade this tick?
-                if (active.Index != _lastWeaponIndex[slot])
-                {
-                    _lastWeaponIndex[slot] = active.Index;
-
-                    int target = now + delayTicks;
-
-                    // Only help when the game would otherwise force a LONGER wait.
-                    // (Never make a nade slower than the game already allows.)
-                    _pinnedTick[slot] = active.NextPrimaryAttackTick > target ? target : -1;
-                }
-
-                // While inside the shortened window, hold the throw-allowed time
-                // fixed at our target so the game can't push it back out.
-                if (_pinnedTick[slot] != -1)
-                {
-                    if (now >= _pinnedTick[slot])
-                    {
-                        // Window passed; hand control back to the game.
-                        _pinnedTick[slot] = -1;
-                    }
-                    else
-                    {
-                        active.NextPrimaryAttackTick = _pinnedTick[slot];
-                        active.NextPrimaryAttackTickRatio = 0.0f;
-                        Utilities.SetStateChanged(active, "CBasePlayerWeapon", "m_nNextPrimaryAttackTick");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // Never let one bad player entity kill the whole tick loop.
-                Logger.LogWarning(ex, "Early Nades: tick handler error for a player");
+                try { ApplyToWeapon(ent, name); }
+                catch { /* ignore individual failures */ }
             }
         }
     }
 
-    private void Reset(int slot)
-    {
-        _lastWeaponIndex[slot] = 0;
-        _pinnedTick[slot] = -1;
-    }
-
-    // Tune the delay live from the server console (or rcon): css_earlynades_delay 0.8
     [ConsoleCommand("css_earlynades_delay",
-        "Seconds before a grenade can be thrown after switching to it")]
+        "Grenade deploy duration in seconds (lower = throw sooner)")]
     public void OnDelayCommand(CCSPlayerController? player, CommandInfo info)
     {
         if (info.ArgCount < 2)
         {
-            info.ReplyToCommand($"[EarlyNades] Current throw delay: {_throwDelay.ToString("0.###", CultureInfo.InvariantCulture)}s");
+            info.ReplyToCommand($"[EarlyNades] Current deploy duration: {_deploy.ToString("0.###", CultureInfo.InvariantCulture)}s");
             return;
         }
 
         if (float.TryParse(info.GetArg(1), NumberStyles.Float, CultureInfo.InvariantCulture, out float v)
             && v >= 0.0f && v <= 2.0f)
         {
-            _throwDelay = v;
-            info.ReplyToCommand($"[EarlyNades] Throw delay set to {_throwDelay.ToString("0.###", CultureInfo.InvariantCulture)}s");
+            _deploy = v;
+            _logged.Clear();
+            ApplyToAllExisting(); // re-apply to grenades currently in the world
+            info.ReplyToCommand($"[EarlyNades] Deploy duration set to {_deploy.ToString("0.###", CultureInfo.InvariantCulture)}s");
         }
         else
         {
