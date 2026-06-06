@@ -74,14 +74,15 @@ public class EarlyNades : BasePlugin
 
         // VData is shared per weapon type, so this effectively sets it for all
         // grenades of this kind. Writing every spawn is cheap and idempotent.
-        ref float deploy = ref Schema.GetRef<float>(
-            vdata.Handle, "CBasePlayerWeaponVData", "m_flDeployDuration");
+        // DeployDuration is the generated property for the schema member
+        // "m_flDeployDuration" on CBasePlayerWeaponVData.
+        float old = vdata.DeployDuration;
 
         if (_logged.Add(name))
             Logger.LogInformation(
-                "EarlyNades: {Weapon} deploy {Old:0.###}s -> {New:0.###}s", name, deploy, _deploy);
+                "EarlyNades: {Weapon} deploy {Old:0.###}s -> {New:0.###}s", name, old, _deploy);
 
-        deploy = _deploy;
+        vdata.DeployDuration = _deploy;
     }
 
     private void ApplyToAllExisting()
