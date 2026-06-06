@@ -14,7 +14,7 @@ namespace EarlyNades;
 public class EarlyNades : BasePlugin
 {
     public override string ModuleName => "Early Nades";
-    public override string ModuleVersion => "2.0.0";
+    public override string ModuleVersion => "3.0.0";
     public override string ModuleAuthor => "EarlyNades";
     public override string ModuleDescription =>
         "Shortens grenade deploy time so they can be thrown sooner.";
@@ -40,10 +40,14 @@ public class EarlyNades : BasePlugin
     {
         RegisterListener<Listeners.OnEntitySpawned>(OnEntitySpawned);
 
-        // Catch grenades that already exist (e.g. on hot reload).
-        ApplyToAllExisting();
+        // Only sweep already-existing grenades on a HOT RELOAD, when the entity
+        // system is already up. On a cold server start the entity system isn't
+        // initialized yet (calling entity lookups there throws), and
+        // OnEntitySpawned will catch grenades as they get created during play.
+        if (hotReload)
+            ApplyToAllExisting();
 
-        Logger.LogInformation("=== Early Nades v2 LOADED. deploy={Deploy}s ===", _deploy);
+        Logger.LogInformation("=== Early Nades v3 LOADED. deploy={Deploy}s ===", _deploy);
     }
 
     private void OnEntitySpawned(CEntityInstance entity)
@@ -89,10 +93,16 @@ public class EarlyNades : BasePlugin
     {
         foreach (var name in GrenadeNames)
         {
-            foreach (var ent in Utilities.FindAllEntitiesByDesignerName<CCSWeaponBase>(name))
+            try
             {
-                try { ApplyToWeapon(ent, name); }
-                catch { /* ignore individual failures */ }
+                // The enumeration itself can throw if the entity system isn't
+                // ready, so keep it inside the try.
+                foreach (var ent in Utilities.FindAllEntitiesByDesignerName<CCSWeaponBase>(name))
+                    ApplyToWeapon(ent, name);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Early Nades: existing-entity sweep failed for {Name}", name);
             }
         }
     }
