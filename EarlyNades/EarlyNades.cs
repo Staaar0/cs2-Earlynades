@@ -7,22 +7,16 @@ using Microsoft.Extensions.Logging;
 
 namespace EarlyNades;
 
-// Shortens the grenade pull-out (deploy) time by writing m_flDeployDuration
-// directly into each grenade's weapon-data in the server's memory at runtime.
-// This is authoritative on the server regardless of whether a workshop vdata
-// addon is mounted, and uses no signatures.
 public class EarlyNades : BasePlugin
 {
-    public override string ModuleName => "Early Nades";
-    public override string ModuleVersion => "3.0.0";
-    public override string ModuleAuthor => "EarlyNades";
+    public override string ModuleName => "EarlyNades";
+    public override string ModuleVersion => "1.0.0";
+    public override string ModuleAuthor => "✪ Stαr";
     public override string ModuleDescription =>
         "Shortens grenade deploy time so they can be thrown sooner.";
 
-    // Desired deploy duration in seconds. Default game value is 1.0.
     private float _deploy = 0.8f;
 
-    // Remember which grenade types we've already logged, to keep the console clean.
     private readonly HashSet<string> _logged = new();
 
     private static readonly HashSet<string> GrenadeNames = new()
@@ -40,10 +34,6 @@ public class EarlyNades : BasePlugin
     {
         RegisterListener<Listeners.OnEntitySpawned>(OnEntitySpawned);
 
-        // Only sweep already-existing grenades on a HOT RELOAD, when the entity
-        // system is already up. On a cold server start the entity system isn't
-        // initialized yet (calling entity lookups there throws), and
-        // OnEntitySpawned will catch grenades as they get created during play.
         if (hotReload)
             ApplyToAllExisting();
 
@@ -76,10 +66,6 @@ public class EarlyNades : BasePlugin
         if (vdata is null)
             return;
 
-        // VData is shared per weapon type, so this effectively sets it for all
-        // grenades of this kind. Writing every spawn is cheap and idempotent.
-        // DeployDuration is the generated property for the schema member
-        // "m_flDeployDuration" on CBasePlayerWeaponVData.
         float old = vdata.DeployDuration;
 
         if (_logged.Add(name))
@@ -95,8 +81,6 @@ public class EarlyNades : BasePlugin
         {
             try
             {
-                // The enumeration itself can throw if the entity system isn't
-                // ready, so keep it inside the try.
                 foreach (var ent in Utilities.FindAllEntitiesByDesignerName<CCSWeaponBase>(name))
                     ApplyToWeapon(ent, name);
             }
@@ -122,7 +106,7 @@ public class EarlyNades : BasePlugin
         {
             _deploy = v;
             _logged.Clear();
-            ApplyToAllExisting(); // re-apply to grenades currently in the world
+            ApplyToAllExisting();
             info.ReplyToCommand($"[EarlyNades] Deploy duration set to {_deploy.ToString("0.###", CultureInfo.InvariantCulture)}s");
         }
         else
