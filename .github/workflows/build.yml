@@ -1,9 +1,13 @@
-name: Build EarlyNades
+name: Build & Release EarlyNades
 
 on:
   push:
-  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
+
+# Required so the workflow can create tags + releases.
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -20,15 +24,20 @@ jobs:
       - name: Restore
         run: dotnet restore EarlyNades/EarlyNades.csproj
 
-      - name: Build (Release)
-        run: dotnet build EarlyNades/EarlyNades.csproj -c Release --no-restore
+      - name: Publish (Release)
+        run: dotnet publish EarlyNades/EarlyNades.csproj -c Release -o publish --no-restore
 
-      - name: Publish
-        run: dotnet publish EarlyNades/EarlyNades.csproj -c Release -o publish/EarlyNades --no-restore
+      - name: Package plugin
+        run: |
+          PLUGIN_DIR="package/addons/counterstrikesharp/plugins/EarlyNades"
+          mkdir -p "$PLUGIN_DIR"
+          cp publish/EarlyNades.dll "$PLUGIN_DIR/"
+          (cd package && zip -r "../EarlyNades-v1.0.${{ github.run_number }}.zip" addons)
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: EarlyNades
-          # The file you actually need is EarlyNades.dll inside this folder.
-          path: publish/EarlyNades
+          tag_name: v1.0.${{ github.run_number }}
+          name: EarlyNades v1.0.${{ github.run_number }}
+          files: EarlyNades-v1.0.${{ github.run_number }}.zip
+          generate_release_notes: true
