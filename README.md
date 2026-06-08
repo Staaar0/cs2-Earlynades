@@ -27,6 +27,12 @@ css_plugins load EarlyNades
 
 ---
 
+## Config path
+
+```
+addons/counterstrikesharp/plugins/EarlyNades/EarlyNade.json
+```
+
 ## Tuning the delay
 
 Default is `0.8`.
