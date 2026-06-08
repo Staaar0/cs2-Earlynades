@@ -7,6 +7,10 @@ pulling out a nade and being able to throw it; this plugin shortens that to
 
 ---
 
+https://github.com/user-attachments/assets/3681105e-c07b-46e9-9763-d4ac0d3b7775
+
+---
+
 ## Install
 
 Put the dll here:
